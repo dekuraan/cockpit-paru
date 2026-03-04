@@ -1,0 +1,34 @@
+node_modules/
+dist/
+backend/target/
+
+*.log
+*.tsbuildinfo
+
+# Editor/OS
+.DS_Store
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.kate-swp
+
+# Test artifacts
+coverage/
+playwright-report/
+test-results/
+
+# Build artifacts
+/packaging/arch/PKGBUILD
+*.tar.gz
+*.pkg.tar.zst
+*.pkg.tar.xz
+
+# Auth/secrets
+.auth/
+.env
+.env.*
+
+# Misc
+todo.txt

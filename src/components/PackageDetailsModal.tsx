@@ -1,0 +1,296 @@
+import React, { useState } from "react";
+import {
+	Spinner,
+	DescriptionList,
+	DescriptionListGroup,
+	DescriptionListTerm,
+	DescriptionListDescription,
+	Label,
+	LabelGroup,
+	Popover,
+	Icon,
+	Modal,
+	ModalVariant,
+	ModalHeader,
+	ModalBody,
+	ModalFooter,
+	Button,
+	EmptyState,
+	EmptyStateBody,
+} from '@patternfly/react-core';
+import { OutlinedQuestionCircleIcon, ArrowDownIcon, ExclamationCircleIcon, TopologyIcon, ExternalLinkAltIcon } from "@patternfly/react-icons";
+import { PackageDetails, SyncPackageDetails, formatSize, formatDate } from "../api";
+import { sanitizeUrl } from "../utils";
+import { AUR_BASE_URL } from "../constants";
+import { DowngradeModal } from "./DowngradeModal";
+
+type PackageInfo = PackageDetails | SyncPackageDetails;
+
+function isInstalledPackage(pkg: PackageInfo): pkg is PackageDetails {
+  return "install_date" in pkg && "reason" in pkg && "validation" in pkg;
+}
+
+interface PackageDetailsModalProps {
+  packageDetails: PackageInfo | null;
+  isLoading: boolean;
+  onClose: () => void;
+  error?: string | null;
+  onViewDependencies?: (packageName: string) => void;
+}
+
+export const PackageDetailsModal: React.FC<PackageDetailsModalProps> = ({
+  packageDetails,
+  isLoading,
+  onClose,
+  error,
+  onViewDependencies,
+}) => {
+  const [downgradeModalOpen, setDowngradeModalOpen] = useState(false);
+  const isOpen = packageDetails !== null || isLoading || !!error;
+  const isInstalled = packageDetails && isInstalledPackage(packageDetails);
+
+  const handleDowngradeClose = () => {
+    setDowngradeModalOpen(false);
+  };
+
+  return (
+    <>
+    <Modal
+      variant={ModalVariant.medium}
+      isOpen={isOpen}
+      onClose={onClose}
+    >
+      <ModalHeader title={packageDetails?.name ?? (error ? "Package Details" : "Loading...")} />
+      <ModalBody>
+        {isLoading ? (
+          <Spinner />
+        ) : error ? (
+          <EmptyState headingLevel="h4" icon={ExclamationCircleIcon} titleText="Package not found">
+            <EmptyStateBody>
+              {error}
+            </EmptyStateBody>
+          </EmptyState>
+        ) : packageDetails ? (
+          <DescriptionList>
+          <DescriptionListGroup>
+            <DescriptionListTerm>Version</DescriptionListTerm>
+            <DescriptionListDescription>
+              {packageDetails.version}
+            </DescriptionListDescription>
+          </DescriptionListGroup>
+
+          <DescriptionListGroup>
+            <DescriptionListTerm>Repository</DescriptionListTerm>
+            <DescriptionListDescription>
+              {packageDetails.repository || "user"}
+              {isInstalled && !packageDetails.repository && (
+                <Popover
+                  headerContent="User Package"
+                  bodyContent="This package is not from an official repository. It may have been installed from the AUR, built manually with makepkg, or installed from a local PKGBUILD."
+                >
+                  <Icon isInline style={{ marginLeft: "0.5em", cursor: "pointer" }}>
+                    <OutlinedQuestionCircleIcon />
+                  </Icon>
+                </Popover>
+              )}
+            </DescriptionListDescription>
+          </DescriptionListGroup>
+
+          <DescriptionListGroup>
+            <DescriptionListTerm>Description</DescriptionListTerm>
+            <DescriptionListDescription>
+              {packageDetails.description || "-"}
+            </DescriptionListDescription>
+          </DescriptionListGroup>
+
+          {(() => {
+            const safeUrl = sanitizeUrl(packageDetails.url);
+            return safeUrl ? (
+              <DescriptionListGroup>
+                <DescriptionListTerm>URL</DescriptionListTerm>
+                <DescriptionListDescription>
+                  <a href={safeUrl} target="_blank" rel="noopener noreferrer">
+                    {safeUrl}
+                  </a>
+                </DescriptionListDescription>
+              </DescriptionListGroup>
+            ) : null;
+          })()}
+
+          {packageDetails.repository && ["core", "extra", "multilib"].includes(packageDetails.repository) && (
+            <DescriptionListGroup>
+              <DescriptionListTerm>Package Source</DescriptionListTerm>
+              <DescriptionListDescription>
+                <a
+                  href={`https://gitlab.archlinux.org/archlinux/packaging/packages/${packageDetails.name}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  View on Arch GitLab
+                </a>
+              </DescriptionListDescription>
+            </DescriptionListGroup>
+          )}
+
+          {isInstalled && !packageDetails.repository && (
+            <DescriptionListGroup>
+              <DescriptionListTerm>AUR Page</DescriptionListTerm>
+              <DescriptionListDescription>
+                <a
+                  href={`${AUR_BASE_URL}/packages/${packageDetails.name}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  View on AUR <ExternalLinkAltIcon />
+                </a>
+              </DescriptionListDescription>
+            </DescriptionListGroup>
+          )}
+
+          {!isInstalled && "download_size" in packageDetails && (
+            <DescriptionListGroup>
+              <DescriptionListTerm>Download Size</DescriptionListTerm>
+              <DescriptionListDescription>
+                {formatSize(packageDetails.download_size)}
+              </DescriptionListDescription>
+            </DescriptionListGroup>
+          )}
+
+          <DescriptionListGroup>
+            <DescriptionListTerm>Installed Size</DescriptionListTerm>
+            <DescriptionListDescription>
+              {formatSize(packageDetails.installed_size)}
+            </DescriptionListDescription>
+          </DescriptionListGroup>
+
+          {isInstalled && (
+            <>
+              <DescriptionListGroup>
+                <DescriptionListTerm>Install Date</DescriptionListTerm>
+                <DescriptionListDescription>
+                  {formatDate(packageDetails.install_date)}
+                </DescriptionListDescription>
+              </DescriptionListGroup>
+
+              <DescriptionListGroup>
+                <DescriptionListTerm>Install Reason</DescriptionListTerm>
+                <DescriptionListDescription>
+                  <Label color={packageDetails.reason === "explicit" ? "blue" : "grey"}>
+                    {packageDetails.reason}
+                  </Label>
+                </DescriptionListDescription>
+              </DescriptionListGroup>
+            </>
+          )}
+
+          {packageDetails.licenses.length > 0 && (
+            <DescriptionListGroup>
+              <DescriptionListTerm>Licenses</DescriptionListTerm>
+              <DescriptionListDescription>
+                <LabelGroup>
+                  {packageDetails.licenses.map((license: string) => (
+                    <Label key={license}>{license}</Label>
+                  ))}
+                </LabelGroup>
+              </DescriptionListDescription>
+            </DescriptionListGroup>
+          )}
+
+          {packageDetails.depends.length > 0 && (
+            <DescriptionListGroup>
+              <DescriptionListTerm>Dependencies</DescriptionListTerm>
+              <DescriptionListDescription>
+                <LabelGroup numLabels={10}>
+                  {packageDetails.depends.map((dep: string) => (
+                    <Label key={dep} variant="outline">{dep}</Label>
+                  ))}
+                </LabelGroup>
+              </DescriptionListDescription>
+            </DescriptionListGroup>
+          )}
+
+          {packageDetails.optdepends.length > 0 && (
+            <DescriptionListGroup>
+              <DescriptionListTerm>Optional Dependencies</DescriptionListTerm>
+              <DescriptionListDescription>
+                <LabelGroup numLabels={10}>
+                  {packageDetails.optdepends.map((dep: string) => (
+                    <Label key={dep} variant="outline" color="grey">{dep}</Label>
+                  ))}
+                </LabelGroup>
+              </DescriptionListDescription>
+            </DescriptionListGroup>
+          )}
+
+          {isInstalled && packageDetails.packager && (
+            <DescriptionListGroup>
+              <DescriptionListTerm>Packager</DescriptionListTerm>
+              <DescriptionListDescription>
+                {packageDetails.packager}
+                {packageDetails.packager === "Unknown Packager" && (
+                  <Popover
+                    headerContent="Unknown Packager"
+                    bodyContent={'This package was built locally without a PACKAGER configured in makepkg.conf. This is common for AUR packages. To set your packager identity, add PACKAGER="Your Name <email>" to ~/.makepkg.conf'}
+                  >
+                    <Icon isInline style={{ marginLeft: "0.5em", cursor: "pointer" }}>
+                      <OutlinedQuestionCircleIcon />
+                    </Icon>
+                  </Popover>
+                )}
+              </DescriptionListDescription>
+            </DescriptionListGroup>
+          )}
+
+          <DescriptionListGroup>
+            <DescriptionListTerm>Architecture</DescriptionListTerm>
+            <DescriptionListDescription>
+              {packageDetails.architecture || "any"}
+            </DescriptionListDescription>
+          </DescriptionListGroup>
+
+          <DescriptionListGroup>
+            <DescriptionListTerm>Build Date</DescriptionListTerm>
+            <DescriptionListDescription>
+              {formatDate(packageDetails.build_date)}
+            </DescriptionListDescription>
+          </DescriptionListGroup>
+          </DescriptionList>
+        ) : null}
+      </ModalBody>
+      {packageDetails && (
+        <ModalFooter>
+          {onViewDependencies && (
+            <Button
+              variant="secondary"
+              icon={<TopologyIcon />}
+              onClick={() => {
+                onViewDependencies(packageDetails.name);
+                onClose();
+              }}
+            >
+              View Dependencies
+            </Button>
+          )}
+          {isInstalled && (
+            <Button
+              variant="secondary"
+              icon={<ArrowDownIcon />}
+              onClick={() => setDowngradeModalOpen(true)}
+            >
+              Downgrade
+            </Button>
+          )}
+        </ModalFooter>
+      )}
+    </Modal>
+    {isInstalled && packageDetails && (
+      <DowngradeModal
+        packageName={packageDetails.name}
+        currentVersion={packageDetails.version}
+        isOpen={downgradeModalOpen}
+        onClose={handleDowngradeClose}
+      />
+    )}
+    </>
+  );
+};

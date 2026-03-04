@@ -1,0 +1,402 @@
+import React, { useState, useEffect, useCallback, useRef } from "react";
+import { useDebouncedValue } from "../hooks/useDebounce";
+import { usePackageDetails } from "../hooks/usePackageDetails";
+import { usePagination } from "../hooks/usePagination";
+import { useSortableTable } from "../hooks/useSortableTable";
+import {
+  Card,
+  CardBody,
+  Spinner,
+  Alert,
+  SearchInput,
+  Toolbar,
+  ToolbarContent,
+  ToolbarItem,
+  ToggleGroup,
+  ToggleGroupItem,
+  Badge,
+  Label,
+  Pagination,
+  MenuToggle,
+  Select,
+  SelectOption,
+  SelectList,
+  Button,
+} from "@patternfly/react-core";
+import { TopologyIcon } from "@patternfly/react-icons";
+import { Table, Thead, Tr, Th, Tbody, Td } from "@patternfly/react-table";
+import { DependencyView } from "./DependencyView";
+import { OrphansView } from "./OrphansView";
+import {
+  Package,
+  PackageListResponse,
+  FilterType,
+  listInstalled,
+  listOrphans,
+  formatSize,
+  formatNumber,
+} from "../api";
+import { sanitizeSearchInput } from "../utils";
+import { PackageDetailsModal } from "./PackageDetailsModal";
+import { PER_PAGE_OPTIONS, SEARCH_DEBOUNCE_MS } from "../constants";
+
+interface PackageListProps {
+  graphPackage?: string;
+  onGraphPackageChange?: (packageName: string | undefined) => void;
+}
+
+export const PackageList: React.FC<PackageListProps> = ({ graphPackage, onGraphPackageChange }) => {
+  const [packages, setPackages] = useState<Package[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [searchValue, setSearchValue] = useState("");
+  const [searchInput, setSearchInput] = useState("");
+  const [filter, setFilter] = useState<FilterType>("all");
+  const { selectedPackage, detailsLoading, detailsError, fetchDetails, clearDetails } = usePackageDetails();
+
+  const { page, perPage, total, setPage, setTotal, onSetPage, onPerPageSelect } = usePagination();
+  const [totalExplicit, setTotalExplicit] = useState(0);
+  const [totalDependency, setTotalDependency] = useState(0);
+  const [repositories, setRepositories] = useState<string[]>([]);
+  const [repoFilter, setRepoFilter] = useState("all");
+  const [repoSelectOpen, setRepoSelectOpen] = useState(false);
+  const manualSearchRef = useRef(false);
+  const isMountedRef = useRef(true);
+
+  const [orphanCount, setOrphanCount] = useState(0);
+
+  const { activeSortIndex, activeSortDirection, getSortParams } = useSortableTable({
+    sortableColumns: [0, 3, 4],
+    defaultDirection: "asc",
+    onSort: () => setPage(1),
+  });
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (graphPackage) {
+      setFilter("graph");
+    }
+  }, [graphPackage]);
+
+  const debouncedSearchInput = useDebouncedValue(
+    sanitizeSearchInput(searchInput),
+    SEARCH_DEBOUNCE_MS
+  );
+
+  useEffect(() => {
+    if (manualSearchRef.current) {
+      manualSearchRef.current = false;
+      return;
+    }
+    if (debouncedSearchInput !== searchValue) {
+      setSearchValue(debouncedSearchInput);
+      setPage(1);
+    }
+  }, [debouncedSearchInput, searchValue, setPage]);
+
+  const getSortField = (index: number | null): string => {
+    if (index === null) return "";
+    switch (index) {
+      case 0: return "name";
+      case 3: return "size";
+      case 4: return "reason";
+      default: return "";
+    }
+  };
+
+  const loadOrphanCount = useCallback(async () => {
+    try {
+      const response = await listOrphans();
+      if (!isMountedRef.current) return;
+      setOrphanCount(response.orphans.length);
+    } catch {
+      // Not critical
+    }
+  }, []);
+
+  const loadPackages = useCallback(async () => {
+    if (filter === "graph" || filter === "orphan") {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      const offset = (page - 1) * perPage;
+      const response: PackageListResponse = await listInstalled({
+        offset,
+        limit: perPage,
+        search: searchValue,
+        filter,
+        repo: repoFilter,
+        sortBy: getSortField(activeSortIndex),
+        sortDir: activeSortDirection,
+      });
+      if (!isMountedRef.current) return;
+      setPackages(response.packages);
+      setTotal(response.total);
+      setTotalExplicit(response.total_explicit);
+      setTotalDependency(response.total_dependency);
+      setRepositories(response.repositories || []);
+    } catch (ex) {
+      if (!isMountedRef.current) return;
+      setError(ex instanceof Error ? ex.message : String(ex));
+    } finally {
+      if (isMountedRef.current) {
+        setLoading(false);
+      }
+    }
+  }, [page, perPage, searchValue, filter, repoFilter, activeSortIndex, activeSortDirection, setTotal]);
+
+  useEffect(() => {
+    loadPackages();
+  }, [loadPackages]);
+
+  useEffect(() => {
+    loadOrphanCount();
+  }, [loadOrphanCount]);
+
+  const handleSearch = () => {
+    manualSearchRef.current = true;
+    const sanitized = sanitizeSearchInput(searchInput);
+    setSearchValue(sanitized);
+    setPage(1);
+  };
+
+  const handleSearchClear = () => {
+    manualSearchRef.current = true;
+    setSearchInput("");
+    setSearchValue("");
+    setPage(1);
+  };
+
+  const handleFilterChange = (newFilter: FilterType) => {
+    setFilter(newFilter);
+    setPage(1);
+  };
+
+  const handleRowClick = (pkgName: string) => {
+    fetchDetails(pkgName);
+  };
+
+  if (error && packages.length === 0 && filter !== "orphan") {
+    const isLockError = error?.toLowerCase().includes("unable to lock database");
+    return (
+      <Card>
+        <CardBody>
+          <Alert
+            variant={isLockError ? "warning" : "danger"}
+            title={isLockError ? "Database is locked" : "Error loading packages"}
+          >
+            {isLockError
+              ? "Another package manager operation is in progress. This could be a system upgrade, package installation, or database sync. Please wait for it to complete."
+              : error}
+          </Alert>
+        </CardBody>
+      </Card>
+    );
+  }
+
+  const renderPackageContent = () => {
+    if (loading && packages.length === 0) {
+      return (
+        <div className="pf-v6-u-p-xl pf-v6-u-text-align-center">
+          <Spinner /> Loading packages...
+        </div>
+      );
+    }
+
+    return (
+      <div style={{ position: "relative" }}>
+        {loading && (
+          <div style={{
+            position: "absolute",
+            top: 0,
+            right: 0,
+            padding: "0.5rem",
+            zIndex: 1,
+          }}>
+            <Spinner size="md" />
+          </div>
+        )}
+        <Table aria-label="Installed packages" variant="compact" style={{ opacity: loading ? 0.6 : 1, transition: "opacity 0.2s" }}>
+          <Thead>
+            <Tr>
+              <Th sort={getSortParams(0)}>Name</Th>
+              <Th>Version</Th>
+              <Th>Description</Th>
+              <Th sort={getSortParams(3)}>Size</Th>
+              <Th sort={getSortParams(4)}>Reason</Th>
+            </Tr>
+          </Thead>
+          <Tbody>
+            {packages.map((pkg) => (
+              <Tr
+                key={pkg.name}
+                isClickable
+                onRowClick={() => handleRowClick(pkg.name)}
+              >
+                <Td dataLabel="Name">
+                  <Button variant="link" isInline className="pf-v6-u-p-0">
+                    {pkg.name}
+                  </Button>
+                </Td>
+                <Td dataLabel="Version">{pkg.version}</Td>
+                <Td dataLabel="Description">{pkg.description || "-"}</Td>
+                <Td dataLabel="Size">{formatSize(pkg.installed_size)}</Td>
+                <Td dataLabel="Reason">
+                  <Label color={pkg.reason === "explicit" ? "blue" : "grey"}>
+                    {pkg.reason}
+                  </Label>
+                </Td>
+              </Tr>
+            ))}
+          </Tbody>
+        </Table>
+      </div>
+    );
+  };
+
+  return (
+    <Card>
+      <CardBody>
+        <Toolbar>
+          <ToolbarContent>
+            {filter !== "graph" && filter !== "orphan" && (
+              <ToolbarItem>
+                <SearchInput
+                  placeholder="Search packages..."
+                  value={searchInput}
+                  onChange={(_event, value) => setSearchInput(value)}
+                  onClear={handleSearchClear}
+                  onSearch={handleSearch}
+                />
+              </ToolbarItem>
+            )}
+            <ToolbarItem>
+              <ToggleGroup aria-label="Package filter">
+                <ToggleGroupItem
+                  text={<>All <Badge isRead>{formatNumber(totalExplicit + totalDependency)}</Badge></>}
+                  isSelected={filter === "all"}
+                  onChange={() => handleFilterChange("all")}
+                />
+                <ToggleGroupItem
+                  text={<>Explicit <Badge isRead>{formatNumber(totalExplicit)}</Badge></>}
+                  isSelected={filter === "explicit"}
+                  onChange={() => handleFilterChange("explicit")}
+                />
+                <ToggleGroupItem
+                  text={<>Dependencies <Badge isRead>{formatNumber(totalDependency)}</Badge></>}
+                  isSelected={filter === "dependency"}
+                  onChange={() => handleFilterChange("dependency")}
+                />
+                <ToggleGroupItem
+                  text={<>Orphans <Badge isRead>{formatNumber(orphanCount)}</Badge></>}
+                  isSelected={filter === "orphan"}
+                  onChange={() => handleFilterChange("orphan")}
+                />
+                <ToggleGroupItem
+                  text={<><TopologyIcon /> Graph</>}
+                  isSelected={filter === "graph"}
+                  onChange={() => handleFilterChange("graph")}
+                />
+              </ToggleGroup>
+            </ToolbarItem>
+            {filter !== "orphan" && filter !== "graph" && (
+              <>
+                <ToolbarItem>
+                  <Select
+                    aria-label="Filter by repository"
+                    isOpen={repoSelectOpen}
+                    selected={repoFilter}
+                    onSelect={(_event, value) => {
+                      setRepoFilter(value as string);
+                      setRepoSelectOpen(false);
+                      setPage(1);
+                    }}
+                    onOpenChange={setRepoSelectOpen}
+                    toggle={(toggleRef) => (
+                      <MenuToggle
+                        ref={toggleRef}
+                        onClick={() => setRepoSelectOpen(!repoSelectOpen)}
+                        isExpanded={repoSelectOpen}
+                        aria-label="Filter by repository"
+                      >
+                        {repoFilter === "all" ? "All repositories" : repoFilter}
+                      </MenuToggle>
+                    )}
+                  >
+                    <SelectList>
+                      <SelectOption value="all">All repositories</SelectOption>
+                      {(repositories || []).map((repo) => (
+                        <SelectOption key={repo} value={repo}>
+                          {repo}
+                        </SelectOption>
+                      ))}
+                    </SelectList>
+                  </Select>
+                </ToolbarItem>
+                <ToolbarItem variant="pagination" align={{ default: "alignEnd" }}>
+                  <Pagination
+                    itemCount={total}
+                    perPage={perPage}
+                    page={page}
+                    onSetPage={onSetPage}
+                    onPerPageSelect={onPerPageSelect}
+                    perPageOptions={PER_PAGE_OPTIONS}
+                    isCompact
+                  />
+                </ToolbarItem>
+              </>
+            )}
+          </ToolbarContent>
+        </Toolbar>
+
+        {filter === "graph" ? (
+          <DependencyView initialPackage={graphPackage} />
+        ) : filter === "orphan" ? (
+          <OrphansView />
+        ) : (
+          renderPackageContent()
+        )}
+
+        {filter !== "orphan" && filter !== "graph" && (
+          <Toolbar>
+            <ToolbarContent>
+              <ToolbarItem variant="pagination" align={{ default: "alignEnd" }}>
+                <Pagination
+                  itemCount={total}
+                  perPage={perPage}
+                  page={page}
+                  onSetPage={onSetPage}
+                  onPerPageSelect={onPerPageSelect}
+                  perPageOptions={PER_PAGE_OPTIONS}
+                  isCompact
+                />
+              </ToolbarItem>
+            </ToolbarContent>
+          </Toolbar>
+        )}
+
+        {filter !== "orphan" && (
+          <PackageDetailsModal
+            packageDetails={selectedPackage}
+            isLoading={detailsLoading}
+            onClose={clearDetails}
+            error={detailsError}
+            onViewDependencies={(packageName) => {
+              onGraphPackageChange?.(packageName);
+              setFilter("graph");
+            }}
+          />
+        )}
+      </CardBody>
+    </Card>
+  );
+};

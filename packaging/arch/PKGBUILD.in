@@ -1,0 +1,20 @@
+pkgname=cockpit-paru
+pkgver=VERSION
+pkgrel=1
+pkgdesc='Cockpit plugin for Arch Linux package management with AUR support'
+arch=('x86_64')
+license=('GPL-3.0-or-later')
+depends=('cockpit' 'pacman' 'paru')
+makedepends=('npm' 'rust' 'cargo')
+source=("$pkgname-$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+    cd "$pkgname-$pkgver"
+    make build
+}
+
+package() {
+    cd "$pkgname-$pkgver"
+    make DESTDIR="$pkgdir" PREFIX=/usr install
+}

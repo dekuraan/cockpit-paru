@@ -1,0 +1,19 @@
+[Unit]
+Description=Cockpit Paru Scheduled Upgrade
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=!/var/lib/pacman/db.lck
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/cockpit-paru/cockpit-paru-backend scheduled-run
+Nice=19
+IOSchedulingClass=idle
+TimeoutStartSec=1800
+
+# Security hardening
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictRealtime=yes
+LockPersonality=yes
